@@ -29,7 +29,7 @@ function initFirebase() {
       const admin = require('firebase-admin');
       adminApp = admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
-        databaseURL: process.env.FIREBASE_DB_URL || 'https://ogrencimiyiz-default-rtdb.firebaseio.com'
+        databaseURL: process.env.FIREBASE_DB_URL || 'https://ogrencimiyiz-default-rtdb.europe-west1.firebasedatabase.app'
       });
       messaging = admin.messaging();
       console.log('Firebase Admin initialized for FCM V1');

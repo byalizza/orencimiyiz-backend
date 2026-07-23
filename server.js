@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const nodemailer = require('nodemailer');
+const https = require('https');
 require('dotenv').config();
 
 const app = express();
@@ -9,37 +9,57 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-let transporter = null;
-let smtpConfigured = false;
-if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
-  transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: parseInt(process.env.SMTP_PORT || '587'),
-    secure: process.env.SMTP_SECURE === 'true',
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  });
-  smtpConfigured = true;
-  console.log('SMTP configured for', process.env.SMTP_USER);
+let emailer = null;
+
+if (process.env.BREVO_API_KEY) {
+  emailer = async ({ to, subject, html }) => {
+    return new Promise((resolve, reject) => {
+      const data = JSON.stringify({
+        sender: { email: process.env.FROM_EMAIL || process.env.BREVO_API_KEY.split('-')[0] + '@brevo.com' },
+        to: [{ email: to }],
+        subject,
+        htmlContent: html,
+      });
+      const req = https.request({
+        hostname: 'api.brevo.com',
+        path: '/v3/smtp/email',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'api-key': process.env.BREVO_API_KEY,
+          'Content-Length': Buffer.byteLength(data),
+        },
+      }, (res) => {
+        let body = '';
+        res.on('data', chunk => body += chunk);
+        res.on('end', () => {
+          if (res.statusCode === 201) resolve(body);
+          else reject(new Error(`Brevo API error: ${res.statusCode} ${body}`));
+        });
+      });
+      req.on('error', reject);
+      req.write(data);
+      req.end();
+    });
+  };
+  console.log('Brevo API configured');
 } else {
-  console.warn('SMTP not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASS');
+  console.warn('BREVO_API_KEY not set!');
 }
 
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', smtpConfigured, message: 'Öğrenci Asistanı backend running' });
+  res.json({ status: 'ok', brevoConfigured: !!emailer, message: 'Öğrenci Asistanı backend running' });
 });
 
 app.get('/test-smtp', async (req, res) => {
-  if (!transporter) {
-    return res.json({ ok: false, error: 'SMTP not configured' });
-  }
+  if (!emailer) return res.json({ ok: false, error: 'Brevo not configured' });
   try {
-    const testResult = await transporter.sendMail({
-      from: `"Öğrenci Asistanı" <${process.env.SMTP_USER}>`,
-      to: process.env.SMTP_USER,
+    const result = await emailer({
+      to: process.env.FROM_EMAIL || 'alininsiteleri27@gmail.com',
       subject: 'SMTP Test',
-      text: 'Bu bir test mailidir. SMTP çalışıyor.',
+      html: '<p>Test maili başarılı.</p>',
     });
-    res.json({ ok: true, messageId: testResult.messageId, message: 'Test email sent to ' + process.env.SMTP_USER });
+    res.json({ ok: true, result });
   } catch (err) {
     res.json({ ok: false, error: err.message });
   }
@@ -48,17 +68,12 @@ app.get('/test-smtp', async (req, res) => {
 app.post('/send-verification', async (req, res) => {
   try {
     const { email, code } = req.body;
-    if (!email || !code) {
-      return res.status(400).json({ error: 'email and code are required' });
-    }
-    if (!transporter) {
-      return res.status(500).json({ error: 'SMTP not configured' });
-    }
+    if (!email || !code) return res.status(400).json({ error: 'email and code are required' });
+    if (!emailer) return res.status(500).json({ error: 'Brevo not configured' });
 
-    const info = await transporter.sendMail({
-      from: `"Öğrenci Asistanı" <${process.env.SMTP_USER}>`,
+    await emailer({
       to: email,
-      subject: 'E-posta Doğrulama Kodu',
+      subject: 'E-posta Doğrulama Kodu - Öğrenci Asistanı',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 400px; margin: 0 auto; padding: 20px; background-color: #0F1115; border-radius: 18px;">
           <h2 style="color: #4F8CFF; text-align: center;">Öğrenci Asistanı</h2>
@@ -71,8 +86,8 @@ app.post('/send-verification', async (req, res) => {
       `,
     });
 
-    console.log(`Verification code sent to ${email}, messageId: ${info.messageId}`);
-    res.json({ success: true, message: 'Verification code sent', messageId: info.messageId });
+    console.log(`Verification code sent to ${email}`);
+    res.json({ success: true, message: 'Verification code sent' });
   } catch (err) {
     console.error('Email send error:', err.message);
     res.status(500).json({ error: err.message });

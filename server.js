@@ -10,25 +10,23 @@ app.use(express.json({ limit: '10mb' }));
 const PORT = process.env.PORT || 3000;
 
 // Firebase Admin SDK (FCM V1)
+let adminApp = null;
 let messaging = null;
 function initFirebase() {
   try {
     let serviceAccount;
-    // 1) Try Secret File (Render)
     const fs = require('fs');
     const secretPath = '/etc/secrets/firebase-service-account.json';
     if (fs.existsSync(secretPath)) {
       serviceAccount = JSON.parse(fs.readFileSync(secretPath, 'utf8'));
       console.log('Loaded service account from Secret File');
-    }
-    // 2) Fallback: env var (minified JSON on one line)
-    else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    } else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
       serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
       console.log('Loaded service account from env var');
     }
     if (serviceAccount) {
       const admin = require('firebase-admin');
-      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+      adminApp = admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
       messaging = admin.messaging();
       console.log('Firebase Admin initialized for FCM V1');
     }
@@ -133,23 +131,13 @@ app.post('/send-notification', async (req, res) => {
   try {
     const { title, body } = req.body;
     if (!title || !body) return res.status(400).json({ error: 'title and body are required' });
-
     if (!messaging) return res.status(500).json({ error: 'FCM not configured' });
 
-    // Fetch tokens from RTDB
-    const dbUrl = process.env.FIREBASE_DB_URL || 'https://ogrencimiyiz-default-rtdb.firebaseio.com';
-    const tokens = await new Promise((resolve, reject) => {
-      https.get(`${dbUrl}/fcm_tokens.json`, (tRes) => {
-        let data = '';
-        tRes.on('data', chunk => data += chunk);
-        tRes.on('end', () => {
-          try {
-            const obj = data ? JSON.parse(data) : {};
-            resolve(Object.values(obj).filter(t => typeof t === 'string' && t.length > 0));
-          } catch (e) { resolve([]); }
-        });
-      }).on('error', reject);
-    });
+    // Fetch tokens using Firebase Admin SDK
+    const admin = require('firebase-admin');
+    const snapshot = await admin.database().ref('fcm_tokens').once('value');
+    const tokensData = snapshot.val() || {};
+    const tokens = Object.values(tokensData).filter(t => typeof t === 'string' && t.length > 0);
 
     if (tokens.length === 0) return res.json({ success: true, sent: 0, total: 0, message: 'No tokens' });
 
@@ -158,7 +146,6 @@ app.post('/send-notification', async (req, res) => {
       data: { title, body },
     };
 
-    // Send in batches of 500 (FCM limit)
     let sent = 0;
     for (let i = 0; i < tokens.length; i += 500) {
       const batch = tokens.slice(i, i + 500);

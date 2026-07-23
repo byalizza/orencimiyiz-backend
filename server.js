@@ -105,7 +105,8 @@ app.post('/send-notification', async (req, res) => {
     if (!title || !body) return res.status(400).json({ error: 'title and body are required' });
     if (!process.env.FCM_SERVER_KEY) return res.status(500).json({ error: 'FCM_SERVER_KEY not configured' });
 
-    https.get('https://fcm-tokens-orencimiyiz-default-rtdb.firebaseio.com/fcm_tokens.json', (tRes) => {
+    const dbUrl = process.env.FIREBASE_DB_URL || 'https://ogrencimiyiz-default-rtdb.firebaseio.com';
+    https.get(`${dbUrl}/fcm_tokens.json`, (tRes) => {
       let data = '';
       tRes.on('data', chunk => data += chunk);
       tRes.on('end', () => {

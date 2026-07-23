@@ -1,50 +1,26 @@
 const express = require('express');
 const cors = require('cors');
+const nodemailer = require('nodemailer');
 require('dotenv').config();
-
-let sendEmail;
-
-// SendGrid (birincil — ölçeklenebilir, 100k+ kullanıcı için)
-if (process.env.SENDGRID_API_KEY) {
-  const sgMail = require('@sendgrid/mail');
-  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-  sendEmail = async ({ to, subject, html }) => {
-    await sgMail.send({
-      to,
-      from: process.env.FROM_EMAIL || 'noreply@orencimiyiz.com',
-      subject,
-      html,
-    });
-  };
-  console.log('SendGrid configured');
-}
-// SMTP (yedek — küçük testler için)
-else if (process.env.SMTP_USER && process.env.SMTP_PASS) {
-  const nodemailer = require('nodemailer');
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT || '587'),
-    secure: false,
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  });
-  sendEmail = async ({ to, subject, html }) => {
-    await transporter.sendMail({
-      from: `"Öğrenci Asistanı" <${process.env.SMTP_USER}>`,
-      to,
-      subject,
-      html,
-    });
-  };
-  console.log('SMTP configured for', process.env.SMTP_USER);
-} else {
-  console.warn('No email provider configured! Set SENDGRID_API_KEY or SMTP_USER/SMTP_PASS');
-}
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+
+let transporter = null;
+if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+  transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: parseInt(process.env.SMTP_PORT || '587'),
+    secure: process.env.SMTP_SECURE === 'true',
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+  });
+  console.log('SMTP configured for', process.env.SMTP_USER);
+} else {
+  console.warn('SMTP not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASS');
+}
 
 app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'Öğrenci Asistanı backend running' });
@@ -56,11 +32,12 @@ app.post('/send-verification', async (req, res) => {
     if (!email || !code) {
       return res.status(400).json({ error: 'email and code are required' });
     }
-    if (!sendEmail) {
-      return res.status(500).json({ error: 'No email provider configured' });
+    if (!transporter) {
+      return res.status(500).json({ error: 'SMTP not configured' });
     }
 
-    await sendEmail({
+    await transporter.sendMail({
+      from: `"Öğrenci Asistanı" <${process.env.SMTP_USER}>`,
       to: email,
       subject: 'E-posta Doğrulama Kodu',
       html: `

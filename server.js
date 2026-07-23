@@ -5,7 +5,25 @@ require('dotenv').config();
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+
+const PORT = process.env.PORT || 3000;
+
+// Firebase Admin SDK (FCM V1)
+let messaging = null;
+if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+  try {
+    const admin = require('firebase-admin');
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    messaging = admin.messaging();
+    console.log('Firebase Admin initialized for FCM V1');
+  } catch (e) {
+    console.warn('Firebase Admin init failed:', e.message);
+  }
+} else {
+  console.warn('FIREBASE_SERVICE_ACCOUNT not set, FCM disabled');
+}
 
 const PORT = process.env.PORT || 3000;
 
@@ -98,58 +116,47 @@ app.listen(PORT, () => {
   console.log(`Backend server running on port ${PORT}`);
 });
 
-// FCM: send notification to all users
 app.post('/send-notification', async (req, res) => {
   try {
     const { title, body } = req.body;
     if (!title || !body) return res.status(400).json({ error: 'title and body are required' });
-    if (!process.env.FCM_SERVER_KEY) return res.status(500).json({ error: 'FCM_SERVER_KEY not configured' });
 
+    if (!messaging) return res.status(500).json({ error: 'FCM not configured' });
+
+    // Fetch tokens from RTDB
     const dbUrl = process.env.FIREBASE_DB_URL || 'https://ogrencimiyiz-default-rtdb.firebaseio.com';
-    https.get(`${dbUrl}/fcm_tokens.json`, (tRes) => {
-      let data = '';
-      tRes.on('data', chunk => data += chunk);
-      tRes.on('end', () => {
-        const tokens = data ? Object.values(JSON.parse(data)).filter(t => t) : [];
-        if (tokens.length === 0) return res.json({ success: true, sent: 0, message: 'No tokens' });
-
-        let sent = 0;
-        let completed = 0;
-        tokens.forEach(token => {
-          const fcmData = JSON.stringify({
-            to: token,
-            notification: { title, body },
-            data: { title, body },
-          });
-          const fcmReq = https.request({
-            hostname: 'fcm.googleapis.com',
-            path: '/fcm/send',
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'key=' + process.env.FCM_SERVER_KEY,
-              'Content-Length': Buffer.byteLength(fcmData),
-            },
-          }, (fRes) => {
-            let fb = '';
-            fRes.on('data', c => fb += c);
-            fRes.on('end', () => {
-              completed++;
-              if (JSON.parse(fb).success === 1) sent++;
-              if (completed === tokens.length) {
-                console.log(`Notification sent to ${sent}/${tokens.length} devices`);
-                res.json({ success: true, sent, total: tokens.length });
-              }
-            });
-          });
-          fcmReq.on('error', (err) => { completed++; if (completed === tokens.length) res.json({ success: true, sent, total: tokens.length }); });
-          fcmReq.write(fcmData);
-          fcmReq.end();
+    const tokens = await new Promise((resolve, reject) => {
+      https.get(`${dbUrl}/fcm_tokens.json`, (tRes) => {
+        let data = '';
+        tRes.on('data', chunk => data += chunk);
+        tRes.on('end', () => {
+          try {
+            const obj = data ? JSON.parse(data) : {};
+            resolve(Object.values(obj).filter(t => typeof t === 'string' && t.length > 0));
+          } catch (e) { resolve([]); }
         });
-      });
+      }).on('error', reject);
     });
+
+    if (tokens.length === 0) return res.json({ success: true, sent: 0, total: 0, message: 'No tokens' });
+
+    const message = {
+      notification: { title, body },
+      data: { title, body },
+    };
+
+    // Send in batches of 500 (FCM limit)
+    let sent = 0;
+    for (let i = 0; i < tokens.length; i += 500) {
+      const batch = tokens.slice(i, i + 500);
+      const response = await messaging.sendEachForMulticast({ ...message, tokens: batch });
+      sent += response.successCount;
+    }
+
+    console.log(`FCM: ${sent}/${tokens.length} delivered`);
+    res.json({ success: true, sent, total: tokens.length });
   } catch (err) {
-    console.error('FCM send error:', err.message);
+    console.error('FCM error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

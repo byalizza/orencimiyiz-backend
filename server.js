@@ -149,10 +149,6 @@ app.post('/send-verification', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Backend server running on port ${PORT}`);
-});
-
 app.post('/send-notification', async (req, res) => {
   try {
     const { title, body } = req.body;
@@ -185,4 +181,8 @@ app.post('/send-notification', async (req, res) => {
     console.error('FCM error:', err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+app.listen(PORT, () => {
+  console.log(`Backend server running on port ${PORT}`);
 });

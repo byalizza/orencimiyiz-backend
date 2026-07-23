@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const https = require('https');
+const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
@@ -15,11 +16,11 @@ let messaging = null;
 function initFirebase() {
   try {
     let serviceAccount;
-    const fs = require('fs');
-    const secretPath = '/etc/secrets/firebase-service-account.json';
-    if (fs.existsSync(secretPath)) {
-      serviceAccount = JSON.parse(fs.readFileSync(secretPath, 'utf8'));
-      console.log('Loaded service account from Secret File');
+    const paths = ['/etc/secrets/firebase-service-account.json', '/etc/secrets/FIREBASE_SERVICE_ACCOUNT'];
+    let foundPath = paths.find(p => fs.existsSync(p));
+    if (foundPath) {
+      serviceAccount = JSON.parse(fs.readFileSync(foundPath, 'utf8'));
+      console.log('Loaded service account from', foundPath);
     } else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
       serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
       console.log('Loaded service account from env var');
@@ -29,6 +30,8 @@ function initFirebase() {
       adminApp = admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
       messaging = admin.messaging();
       console.log('Firebase Admin initialized for FCM V1');
+    } else {
+      console.warn('No service account found! Check Secret Files or FIREBASE_SERVICE_ACCOUNT env var.');
     }
   } catch (e) {
     console.warn('Firebase Admin init failed:', e.message);
@@ -75,10 +78,14 @@ if (process.env.BREVO_API_KEY) {
 }
 
 app.get('/', (req, res) => {
+  const paths = ['/etc/secrets/firebase-service-account.json', '/etc/secrets/FIREBASE_SERVICE_ACCOUNT'];
+  const secretExists = paths.filter(p => { try { return fs.existsSync(p); } catch(e) { return false; } });
   res.json({
     status: 'ok',
     brevoConfigured: !!emailer,
     fcmConfigured: !!messaging,
+    secretFilesFound: secretExists,
+    hasEnvVar: !!process.env.FIREBASE_SERVICE_ACCOUNT,
     message: 'Öğrenci Asistanı backend running'
   });
 });

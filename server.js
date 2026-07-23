@@ -97,3 +97,58 @@ app.post('/send-verification', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Backend server running on port ${PORT}`);
 });
+
+// FCM: send notification to all users
+app.post('/send-notification', async (req, res) => {
+  try {
+    const { title, body } = req.body;
+    if (!title || !body) return res.status(400).json({ error: 'title and body are required' });
+    if (!process.env.FCM_SERVER_KEY) return res.status(500).json({ error: 'FCM_SERVER_KEY not configured' });
+
+    https.get('https://fcm-tokens-orencimiyiz-default-rtdb.firebaseio.com/fcm_tokens.json', (tRes) => {
+      let data = '';
+      tRes.on('data', chunk => data += chunk);
+      tRes.on('end', () => {
+        const tokens = data ? Object.values(JSON.parse(data)).filter(t => t) : [];
+        if (tokens.length === 0) return res.json({ success: true, sent: 0, message: 'No tokens' });
+
+        let sent = 0;
+        let completed = 0;
+        tokens.forEach(token => {
+          const fcmData = JSON.stringify({
+            to: token,
+            notification: { title, body },
+            data: { title, body },
+          });
+          const fcmReq = https.request({
+            hostname: 'fcm.googleapis.com',
+            path: '/fcm/send',
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'key=' + process.env.FCM_SERVER_KEY,
+              'Content-Length': Buffer.byteLength(fcmData),
+            },
+          }, (fRes) => {
+            let fb = '';
+            fRes.on('data', c => fb += c);
+            fRes.on('end', () => {
+              completed++;
+              if (JSON.parse(fb).success === 1) sent++;
+              if (completed === tokens.length) {
+                console.log(`Notification sent to ${sent}/${tokens.length} devices`);
+                res.json({ success: true, sent, total: tokens.length });
+              }
+            });
+          });
+          fcmReq.on('error', (err) => { completed++; if (completed === tokens.length) res.json({ success: true, sent, total: tokens.length }); });
+          fcmReq.write(fcmData);
+          fcmReq.end();
+        });
+      });
+    });
+  } catch (err) {
+    console.error('FCM send error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});

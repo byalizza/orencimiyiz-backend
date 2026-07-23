@@ -1,6 +1,5 @@
 const express = require('express');
 const cors = require('cors');
-const https = require('https');
 require('dotenv').config();
 
 const app = express();
@@ -35,8 +34,6 @@ function initFirebase() {
   }
 }
 initFirebase();
-
-const PORT = process.env.PORT || 3000;
 
 let emailer = null;
 

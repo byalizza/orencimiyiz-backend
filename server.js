@@ -75,7 +75,12 @@ if (process.env.BREVO_API_KEY) {
 }
 
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', brevoConfigured: !!emailer, message: 'Öğrenci Asistanı backend running' });
+  res.json({
+    status: 'ok',
+    brevoConfigured: !!emailer,
+    fcmConfigured: !!messaging,
+    message: 'Öğrenci Asistanı backend running'
+  });
 });
 
 app.get('/test-smtp', async (req, res) => {
@@ -87,6 +92,19 @@ app.get('/test-smtp', async (req, res) => {
       html: '<p>Test maili başarılı.</p>',
     });
     res.json({ ok: true, result });
+  } catch (err) {
+    res.json({ ok: false, error: err.message });
+  }
+});
+
+app.get('/test-fcm', async (req, res) => {
+  try {
+    if (!messaging) return res.json({ ok: false, error: 'FCM not configured' });
+    const admin = require('firebase-admin');
+    const snapshot = await admin.database().ref('fcm_tokens').once('value');
+    const tokensData = snapshot.val() || {};
+    const tokens = Object.values(tokensData).filter(t => typeof t === 'string' && t.length > 0);
+    res.json({ ok: true, tokenCount: tokens.length, tokens: tokensData });
   } catch (err) {
     res.json({ ok: false, error: err.message });
   }

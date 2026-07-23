@@ -10,6 +10,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 let transporter = null;
+let smtpConfigured = false;
 if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
   transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
@@ -17,13 +18,31 @@ if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
     secure: process.env.SMTP_SECURE === 'true',
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
   });
+  smtpConfigured = true;
   console.log('SMTP configured for', process.env.SMTP_USER);
 } else {
   console.warn('SMTP not configured. Set SMTP_HOST, SMTP_USER, SMTP_PASS');
 }
 
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', message: 'Öğrenci Asistanı backend running' });
+  res.json({ status: 'ok', smtpConfigured, message: 'Öğrenci Asistanı backend running' });
+});
+
+app.get('/test-smtp', async (req, res) => {
+  if (!transporter) {
+    return res.json({ ok: false, error: 'SMTP not configured' });
+  }
+  try {
+    const testResult = await transporter.sendMail({
+      from: `"Öğrenci Asistanı" <${process.env.SMTP_USER}>`,
+      to: process.env.SMTP_USER,
+      subject: 'SMTP Test',
+      text: 'Bu bir test mailidir. SMTP çalışıyor.',
+    });
+    res.json({ ok: true, messageId: testResult.messageId, message: 'Test email sent to ' + process.env.SMTP_USER });
+  } catch (err) {
+    res.json({ ok: false, error: err.message });
+  }
 });
 
 app.post('/send-verification', async (req, res) => {
@@ -36,7 +55,7 @@ app.post('/send-verification', async (req, res) => {
       return res.status(500).json({ error: 'SMTP not configured' });
     }
 
-    await transporter.sendMail({
+    const info = await transporter.sendMail({
       from: `"Öğrenci Asistanı" <${process.env.SMTP_USER}>`,
       to: email,
       subject: 'E-posta Doğrulama Kodu',
@@ -52,11 +71,11 @@ app.post('/send-verification', async (req, res) => {
       `,
     });
 
-    console.log(`Verification code sent to ${email}`);
-    res.json({ success: true, message: 'Verification code sent' });
+    console.log(`Verification code sent to ${email}, messageId: ${info.messageId}`);
+    res.json({ success: true, message: 'Verification code sent', messageId: info.messageId });
   } catch (err) {
     console.error('Email send error:', err.message);
-    res.status(500).json({ error: 'Failed to send verification email' });
+    res.status(500).json({ error: err.message });
   }
 });
 

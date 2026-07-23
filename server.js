@@ -11,19 +11,32 @@ const PORT = process.env.PORT || 3000;
 
 // Firebase Admin SDK (FCM V1)
 let messaging = null;
-if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+function initFirebase() {
   try {
-    const admin = require('firebase-admin');
-    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-    messaging = admin.messaging();
-    console.log('Firebase Admin initialized for FCM V1');
+    let serviceAccount;
+    // 1) Try Secret File (Render)
+    const fs = require('fs');
+    const secretPath = '/etc/secrets/firebase-service-account.json';
+    if (fs.existsSync(secretPath)) {
+      serviceAccount = JSON.parse(fs.readFileSync(secretPath, 'utf8'));
+      console.log('Loaded service account from Secret File');
+    }
+    // 2) Fallback: env var (minified JSON on one line)
+    else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+      serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+      console.log('Loaded service account from env var');
+    }
+    if (serviceAccount) {
+      const admin = require('firebase-admin');
+      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+      messaging = admin.messaging();
+      console.log('Firebase Admin initialized for FCM V1');
+    }
   } catch (e) {
     console.warn('Firebase Admin init failed:', e.message);
   }
-} else {
-  console.warn('FIREBASE_SERVICE_ACCOUNT not set, FCM disabled');
 }
+initFirebase();
 
 const PORT = process.env.PORT || 3000;
 
